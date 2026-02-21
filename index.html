@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Virtual Assistant (Voice Enabled)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0f0f1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            color: white;
+            overflow: hidden; /* Mencegah scrollbar */
+        }
+
+        /* Canvas Matrix Background */
+        #matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+        }
+
+        /* Container Utama */
+        .assistant-container {
+            text-align: center;
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Visual Kimi Sprite */
+        .kimi-sprite {
+            height: 60vh; 
+            max-height: 550px;
+            aspect-ratio: 1000 / 1491; 
+            margin: 0 auto 10px;
+            display: block;
+            /* Glow default diubah menjadi Ungu */
+            filter: drop-shadow(0 10px 30px rgba(177, 0, 255, 0.3));
+            transition: filter 0.3s ease;
+            animation: idleFloat 4s ease-in-out infinite;
+            background-repeat: no-repeat;
+            background-size: 100% 100%; /* Default untuk idle/kedip */
+        }
+
+        /* Status Mendengarkan (Glowing Ungu Terang) */
+        .kimi-sprite.listening {
+            filter: drop-shadow(0 0 50px #b100ff);
+        }
+
+        @keyframes idleFloat {
+            0%, 100__app_id { transform: translateY(0px); }
+            50% { transform: translateY(-15px); }
+        }
+
+        /* Kotak Obrolan */
+        .chat-box {
+            background: rgba(255, 255, 255, 0.05);
+            width: 100%;
+            max-width: 320px;
+            padding: 15px 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(177, 0, 255, 0.2); /* Border ungu tipis */
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        }
+
+        #display-text {
+            min-height: 40px;
+            margin-bottom: 15px;
+            font-size: 15px;
+            line-height: 1.6;
+            color: #f0e6ff; /* Teks agak keunguan putih */
+            font-weight: 500;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+        }
+
+        button {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            /* Tombol menggunakan gradasi ungu */
+            background: linear-gradient(135deg, #b100ff 0%, #7a00cc 100%);
+            color: white;
+            font-size: 16px;
+            box-shadow: 0 5px 15px rgba(177, 0, 255, 0.4);
+        }
+        button:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(177, 0, 255, 0.6);
+        }
+
+    </style>
+</head>
+<body>
+
+<canvas id="matrix-bg"></canvas>
+
+<div class="assistant-container">
+    <div class="kimi-sprite" id="character-icon"></div>
+    <div class="chat-box">
+        <div id="display-text"></div>
+        <div class="controls">
+            <button id="start-btn" onclick="startAssistant()">
+                ▶ Mulai Sesi Obrolan
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const synth = window.speechSynthesis;
+    let recognition;
+    let isSessionActive = false;
+
+    const characterIcon = document.getElementById('character-icon');
+    const startBtn = document.getElementById('start-btn');
+    const displayText = document.getElementById('display-text');
+
+    // ==========================================
+    // LOGIKA ANIMASI SPRITE KIMI
+    // ==========================================
+    const imgIdle = 'https://raw.githubusercontent.com/fauzanbunz/ai/main/mouth2.png'; 
+    const imgBlink = 'https://raw.githubusercontent.com/fauzanbunz/ai/main/kedip.png';
+    const imgTalk = 'https://raw.githubusercontent.com/fauzanbunz/ai/main/bb.png';
+
+    let isTalking = false;
+    let isBlinking = false;
+    let talkInterval;
+    
+    // Konfigurasi Sprite Bicara
+    const totalTalkFrames = 4; 
+    let currentTalkFrame = 0;
+
+    // Preload gambar
+    [imgIdle, imgBlink, imgTalk].forEach(src => {
+        const img = new Image();
+        img.src = src;
+    });
+
+    function updateSprite() {
+        if (isBlinking) {
+            characterIcon.style.backgroundImage = `url('${imgBlink}')`;
+            characterIcon.style.backgroundSize = '100% 100%';
+            characterIcon.style.backgroundPosition = '0% 0%';
+        } else if (isTalking) {
+            const posX = (currentTalkFrame / (totalTalkFrames - 1)) * 100;
+            characterIcon.style.backgroundImage = `url('${imgTalk}')`;
+            characterIcon.style.backgroundSize = `${totalTalkFrames * 100}% 100%`;
+            characterIcon.style.backgroundPosition = `${posX}% 0%`;
+        } else {
+            characterIcon.style.backgroundImage = `url('${imgIdle}')`;
+            characterIcon.style.backgroundSize = '100% 100%';
+            characterIcon.style.backgroundPosition = '0% 0%';
+        }
+    }
+
+    updateSprite();
+
+    function blinkRoutine() {
+        const nextBlink = Math.random() * 4000 + 2000;
+        setTimeout(() => {
+            if (!isTalking) {
+                isBlinking = true;
+                updateSprite();
+                setTimeout(() => {
+                    isBlinking = false;
+                    updateSprite();
+                    blinkRoutine();
+                }, 150);
+            } else {
+                blinkRoutine();
+            }
+        }, nextBlink);
+    }
+    blinkRoutine();
+
+    // ==========================================
+    // LOGIKA SPEECH & AI (GEMINI)
+    // ==========================================
+
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.lang = 'id-ID'; 
+        recognition.interimResults = false;
+
+        recognition.onstart = function() {
+            if (isSessionActive) {
+                characterIcon.classList.add('listening');
+                displayText.innerText = "(Mendengarkan...)";
+            }
+        };
+
+        recognition.onresult = function(event) {
+            const lastResultIndex = event.results.length - 1;
+            const transcript = event.results[lastResultIndex][0].transcript;
+            handleMessage(transcript);
+        };
+
+        recognition.onend = function() {
+            characterIcon.classList.remove('listening');
+            if (isSessionActive) {
+                setTimeout(() => { try { recognition.start(); } catch(e) {} }, 500);
+            }
+        };
+    }
+
+    function startAssistant() {
+        if (!recognition) return;
+        isSessionActive = true;
+        startBtn.style.display = 'none';
+        speak("Halo Tuan! Aku Kimi. Aku siap mendengarkan.");
+    }
+
+    const apiKey = ""; 
+    
+    async function fetchGeminiResponse(promptText) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const now = new Date();
+        const dateString = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const timeString = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+        const payload = {
+            contents: [{ parts: [{ text: promptText }] }],
+            systemInstruction: { 
+                parts: [{ 
+                    text: `Namamu adalah Kimi. Kamu adalah asisten virtual anime pribadi yang ramah, manis, penurut, dan suportif kepada Tuanmu. Informasi penting: Saat ini adalah hari ${dateString}, pukul ${timeString}. Jawab dalam bahasa Indonesia yang santai dan natural. JANGAN gunakan format list atau markdown. Jawab singkat, maksimal 2 kalimat.` 
+                }] 
+            }
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            let aiText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf Tuan, aku sedikit bingung.";
+            return aiText.replace(/[*_#]/g, '');
+        } catch (error) {
+            return "Maaf Tuan, koneksi pikiranku terganggu.";
+        }
+    }
+
+    async function handleMessage(text) {
+        if (!text.trim()) return;
+        displayText.innerText = "(Berpikir...)";
+        isSessionActive = false;
+        recognition.stop();
+        
+        let aiResponse = await fetchGeminiResponse(text);
+        displayText.innerText = aiResponse;
+        speak(aiResponse);
+    }
+
+    function speak(text) {
+        if (synth.speaking) synth.cancel();
+        isSessionActive = false;
+
+        const utterThis = new SpeechSynthesisUtterance(text);
+        utterThis.lang = 'id-ID'; 
+        utterThis.pitch = 1.0; 
+        utterThis.rate = 1.0; 
+
+        utterThis.onstart = () => {
+            isTalking = true;
+            talkInterval = setInterval(() => {
+                currentTalkFrame = Math.floor(Math.random() * totalTalkFrames);
+                updateSprite();
+            }, 120);
+        };
+        
+        utterThis.onend = () => {
+            isTalking = false;
+            clearInterval(talkInterval);
+            updateSprite();
+            isSessionActive = true;
+            setTimeout(() => { try { recognition.start(); } catch(e) {} }, 500);
+        };
+
+        synth.speak(utterThis);
+    }
+
+    // Matrix Background (Purple)
+    const canvas = document.getElementById('matrix-bg');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const numbers = '0123456789';
+    const fontSize = 16;
+    const columns = canvas.width / fontSize;
+    const drops = Array(Math.floor(columns)).fill(1);
+
+    function drawMatrix() {
+        ctx.fillStyle = 'rgba(15, 15, 26, 0.1)'; 
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#b100ff'; 
+        ctx.font = fontSize + 'px monospace';
+        for (let i = 0; i < drops.length; i++) {
+            const text = numbers.charAt(Math.floor(Math.random() * numbers.length));
+            ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+            if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+            drops[i]++;
+        }
+    }
+    setInterval(drawMatrix, 50);
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+</script>
+
+</body>
+</html>
